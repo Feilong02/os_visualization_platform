@@ -4,11 +4,12 @@
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
                              QTableWidget, QTableWidgetItem, QGroupBox, QLabel,
                              QLineEdit, QMessageBox, QHeaderView,
-                             QSplitter, QComboBox, QTabWidget)
-from PyQt5.QtCore import Qt, QTimer
+                             QSplitter, QComboBox, QTabWidget, QTextEdit)
+from PyQt5.QtCore import Qt, QTimer, QDateTime
 from PyQt5.QtGui import QColor
 import sys
 import os
+import random
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.process import Process, ProcessState, ProcessManager, Thread, ThreadState
@@ -25,14 +26,6 @@ class ProcessModule(QWidget):
         ProcessState.RUNNING: QColor(100, 150, 220),
         ProcessState.BLOCKED: QColor(220, 180, 100),
         ProcessState.TERMINATED: QColor(180, 100, 100),
-    }
-
-    THREAD_STATE_COLORS = {
-        ThreadState.CREATED: QColor(150, 150, 150),
-        ThreadState.READY: QColor(100, 180, 100),
-        ThreadState.RUNNING: QColor(100, 150, 220),
-        ThreadState.BLOCKED: QColor(220, 180, 100),
-        ThreadState.TERMINATED: QColor(180, 100, 100),
     }
 
     def __init__(self, parent=None):
@@ -132,41 +125,22 @@ class ProcessModule(QWidget):
 
         # 线程列表
         self.thread_table = QTableWidget()
-        self.thread_table.setColumnCount(4)
-        self.thread_table.setHorizontalHeaderLabels(["TID", "所属PID", "名称", "状态"])
+        self.thread_table.setColumnCount(3)
+        self.thread_table.setHorizontalHeaderLabels(["TID", "所属PID", "名称"])
         self.thread_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.thread_table.setSelectionBehavior(QTableWidget.SelectRows)
         self.thread_table.setSelectionMode(QTableWidget.SingleSelection)
         self.thread_table.setMaximumHeight(150)
         thread_layout.addWidget(self.thread_table)
 
-        # 线程状态转换控制
+        # 线程删除按钮
         thread_control_layout = QHBoxLayout()
 
-        self.thread_ready_btn = QPushButton("就绪")
-        self.thread_ready_btn.clicked.connect(lambda: self._change_thread_state("ready"))
-        self.thread_ready_btn.setStyleSheet("background-color: #66BB6A;")
-        thread_control_layout.addWidget(self.thread_ready_btn)
-
-        self.thread_run_btn = QPushButton("运行")
-        self.thread_run_btn.clicked.connect(lambda: self._change_thread_state("run"))
-        self.thread_run_btn.setStyleSheet("background-color: #42A5F5;")
-        thread_control_layout.addWidget(self.thread_run_btn)
-
-        self.thread_block_btn = QPushButton("阻塞")
-        self.thread_block_btn.clicked.connect(lambda: self._change_thread_state("block"))
-        self.thread_block_btn.setStyleSheet("background-color: #FFA726;")
-        thread_control_layout.addWidget(self.thread_block_btn)
-
-        self.thread_terminate_btn = QPushButton("终止")
-        self.thread_terminate_btn.clicked.connect(lambda: self._change_thread_state("terminate"))
-        self.thread_terminate_btn.setStyleSheet("background-color: #EF5350; color: white;")
-        thread_control_layout.addWidget(self.thread_terminate_btn)
-
-        self.delete_thread_btn = QPushButton("删除")
+        self.delete_thread_btn = QPushButton("删除线程")
         self.delete_thread_btn.clicked.connect(self._delete_thread)
         self.delete_thread_btn.setStyleSheet("background-color: #B71C1C; color: white;")
         thread_control_layout.addWidget(self.delete_thread_btn)
+        thread_control_layout.addStretch()
 
         thread_layout.addLayout(thread_control_layout)
         left_layout.addWidget(thread_group)
@@ -192,7 +166,7 @@ class ProcessModule(QWidget):
         right_layout = QVBoxLayout(right_panel)
 
         # 状态机图
-        state_group = QGroupBox("进程/线程状态机")
+        state_group = QGroupBox("进程状态机")
         state_layout = QVBoxLayout(state_group)
         self.state_machine = StateMachineWidget()
         state_layout.addWidget(self.state_machine)
@@ -204,6 +178,19 @@ class ProcessModule(QWidget):
         self.queue_widget = QueueAnimationWidget()
         queue_layout.addWidget(self.queue_widget)
         right_layout.addWidget(queue_group)
+
+        # 操作日志
+        log_group = QGroupBox("操作日志")
+        log_layout = QVBoxLayout(log_group)
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMaximumHeight(150)
+        log_layout.addWidget(self.log_text)
+
+        clear_log_btn = QPushButton("清空日志")
+        clear_log_btn.clicked.connect(lambda: self.log_text.clear())
+        log_layout.addWidget(clear_log_btn)
+        right_layout.addWidget(log_group)
 
         layout.addWidget(right_panel, stretch=1)
 
@@ -224,8 +211,8 @@ class ProcessModule(QWidget):
         if not process:
             return
 
-        if process.state == ProcessState.TERMINATED:
-            QMessageBox.warning(self, "提示", "无法在已终止的进程下创建线程")
+        if process.state != ProcessState.RUNNING:
+            QMessageBox.warning(self, "提示", "只有运行态的进程才能创建线程")
             return
 
         name = self.thread_name_input.text() or "Thread"
@@ -239,9 +226,17 @@ class ProcessModule(QWidget):
         """批量创建进程和线程"""
         for i in range(3):
             process = self.process_manager.create_process(f"P{i+1}")
+            # 进程需先转为就绪态，再转为运行态才能创建线程
+            self.process_manager.ready(process.pid)
+            self.process_manager.run(process.pid)
             # 在每个进程下创建2个线程
             for j in range(2):
                 self.process_manager.create_thread(process.pid, f"T{i+1}-{j+1}")
+            # 创建完线程后，随机进入就绪态或阻塞态
+            if random.choice([True, False]):
+                self.process_manager.block(process.pid)
+            else:
+                self.process_manager.ready(process.pid)
         self._refresh_display()
 
     def _get_selected_pid(self) -> int:
@@ -289,33 +284,6 @@ class ProcessModule(QWidget):
             QMessageBox.warning(self, "操作失败",
                                f"无法将进程从 {old_state.value} 转换到目标状态")
 
-    def _change_thread_state(self, action: str):
-        """改变线程状态"""
-        tid = self._get_selected_tid()
-        if tid < 0:
-            QMessageBox.warning(self, "提示", "请先选择一个线程")
-            return
-
-        thread = self.process_manager.get_thread(tid)
-        if not thread:
-            return
-
-        old_state = thread.state
-        success = False
-
-        if action == "ready":
-            success = self.process_manager.thread_ready(tid)
-        elif action == "run":
-            success = self.process_manager.thread_run(tid)
-        elif action == "block":
-            success = self.process_manager.thread_block(tid)
-        elif action == "terminate":
-            success = self.process_manager.thread_terminate(tid)
-
-        if not success:
-            QMessageBox.warning(self, "操作失败",
-                               f"无法将线程从 {old_state.value} 转换到目标状态")
-
     def _delete_process(self):
         """删除进程"""
         pid = self._get_selected_pid()
@@ -326,10 +294,15 @@ class ProcessModule(QWidget):
         # 删除进程下的所有线程
         process = self.process_manager.get_process(pid)
         if process:
+            process_name = process.name
             for tid in process.threads.copy():
+                thread = self.process_manager.get_thread(tid)
+                if thread:
+                    self._log(f"  └─ 线程 {thread.name}(TID={tid}) 被删除")
                 self.process_manager.delete_thread(tid)
 
-        self.process_manager.delete_process(pid)
+            self.process_manager.delete_process(pid)
+            self._log(f"进程 {process_name}(PID={pid}) 被删除")
         self._refresh_display()
 
     def _delete_thread(self):
@@ -339,17 +312,36 @@ class ProcessModule(QWidget):
             QMessageBox.warning(self, "提示", "请先选择一个线程")
             return
 
+        thread = self.process_manager.get_thread(tid)
+        if thread:
+            self._log(f"线程 {thread.name}(TID={tid}) 被删除")
         self.process_manager.delete_thread(tid)
         self._refresh_display()
 
     def _reset_all(self):
         """重置所有进程和线程"""
         self.process_manager.reset()
+        self._log("系统重置，清空所有进程和线程")
         self._refresh_display()
+
+    def _log(self, message: str):
+        """添加日志"""
+        time_str = QDateTime.currentDateTime().toString("hh:mm:ss")
+        self.log_text.append(f"[{time_str}] {message}")
+        # 滚动到底部
+        self.log_text.verticalScrollBar().setValue(
+            self.log_text.verticalScrollBar().maximum()
+        )
 
     def _on_state_change(self, process: Process, old_state: ProcessState,
                         new_state: ProcessState):
         """进程状态变化回调"""
+        # 记录日志
+        if old_state is None:
+            self._log(f"进程 {process.name}(PID={process.pid}) 创建")
+        else:
+            self._log(f"进程 {process.name}(PID={process.pid}): {old_state.value} → {new_state.value}")
+
         self._refresh_display()
 
         # 更新状态机显示
@@ -362,14 +354,11 @@ class ProcessModule(QWidget):
     def _on_thread_state_change(self, thread: Thread, old_state: ThreadState,
                                 new_state: ThreadState):
         """线程状态变化回调"""
+        # 记录日志
+        if old_state is None:
+            self._log(f"  └─ 线程 {thread.name}(TID={thread.tid}) 在进程 PID={thread.pid} 下创建")
+
         self._refresh_display()
-
-        # 更新状态机显示（线程和进程共用状态机）
-        self.state_machine.set_current_state(new_state.value)
-
-        # 高亮状态转换
-        if old_state:
-            self.state_machine.highlight_transition(old_state.value, new_state.value)
 
     def _refresh_display(self):
         """刷新显示"""
@@ -396,13 +385,6 @@ class ProcessModule(QWidget):
             self.thread_table.setItem(row, 0, QTableWidgetItem(str(thread.tid)))
             self.thread_table.setItem(row, 1, QTableWidgetItem(str(thread.pid)))
             self.thread_table.setItem(row, 2, QTableWidgetItem(thread.name))
-
-            state_item = QTableWidgetItem(thread.state.value)
-            color = self.THREAD_STATE_COLORS.get(thread.state)
-            if color:
-                state_item.setBackground(color)
-                state_item.setForeground(QColor(255, 255, 255))
-            self.thread_table.setItem(row, 3, state_item)
 
         # 更新队列显示
         running = self.process_manager.get_running_process()

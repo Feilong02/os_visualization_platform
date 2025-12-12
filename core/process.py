@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Dict, List, Optional, Callable
 from dataclasses import dataclass, field
 import time
+import random
 
 
 class ProcessState(Enum):
@@ -59,22 +60,13 @@ class Process:
 class ProcessManager:
     """进程管理器"""
 
-    # 有效的状态转换定义
+    # 有效的状态转换定义（终止态只能由运行态转换）
     VALID_TRANSITIONS = {
-        ProcessState.CREATED: [ProcessState.READY, ProcessState.TERMINATED],
-        ProcessState.READY: [ProcessState.RUNNING, ProcessState.TERMINATED],
+        ProcessState.CREATED: [ProcessState.READY],
+        ProcessState.READY: [ProcessState.RUNNING],
         ProcessState.RUNNING: [ProcessState.READY, ProcessState.BLOCKED, ProcessState.TERMINATED],
-        ProcessState.BLOCKED: [ProcessState.READY, ProcessState.TERMINATED],
+        ProcessState.BLOCKED: [ProcessState.READY],
         ProcessState.TERMINATED: []
-    }
-
-    # 线程有效的状态转换定义
-    THREAD_VALID_TRANSITIONS = {
-        ThreadState.CREATED: [ThreadState.READY, ThreadState.TERMINATED],
-        ThreadState.READY: [ThreadState.RUNNING, ThreadState.TERMINATED],
-        ThreadState.RUNNING: [ThreadState.READY, ThreadState.BLOCKED, ThreadState.TERMINATED],
-        ThreadState.BLOCKED: [ThreadState.READY, ThreadState.TERMINATED],
-        ThreadState.TERMINATED: []
     }
 
     def __init__(self):
@@ -151,8 +143,11 @@ class ProcessManager:
 
         # 检查是否已有运行进程
         if self.running_process is not None and self.running_process != pid:
-            # 将当前运行进程放回就绪队列
-            self.ready(self.running_process)
+            # 将当前运行进程随机放入就绪队列或阻塞队列
+            if random.choice([True, False]):
+                self.block(self.running_process)
+            else:
+                self.ready(self.running_process)
 
         process = self.processes[pid]
         old_state = process.state
@@ -187,14 +182,11 @@ class ProcessManager:
         return True
 
     def terminate(self, pid: int) -> bool:
-        """终止进程"""
-        if pid not in self.processes:
+        """终止进程（只有运行态才能终止）"""
+        if not self._can_transition(pid, ProcessState.TERMINATED):
             return False
 
         process = self.processes[pid]
-        if process.state == ProcessState.TERMINATED:
-            return False
-
         old_state = process.state
 
         # 从各队列移除
@@ -267,8 +259,8 @@ class ProcessManager:
         if pid not in self.processes:
             return None
         process = self.processes[pid]
-        # 进程必须处于非终止状态
-        if process.state == ProcessState.TERMINATED:
+        # 进程必须处于运行状态才能创建线程
+        if process.state != ProcessState.RUNNING:
             return None
 
         thread = Thread(
@@ -283,55 +275,6 @@ class ProcessManager:
         self._notify_thread_state_change(thread, None, ThreadState.CREATED)
         return thread
 
-    def _can_thread_transition(self, tid: int, new_state: ThreadState) -> bool:
-        """检查线程状态转换是否有效"""
-        if tid not in self.threads:
-            return False
-        current_state = self.threads[tid].state
-        return new_state in self.THREAD_VALID_TRANSITIONS.get(current_state, [])
-
-    def thread_ready(self, tid: int) -> bool:
-        """将线程设为就绪状态"""
-        if not self._can_thread_transition(tid, ThreadState.READY):
-            return False
-        thread = self.threads[tid]
-        old_state = thread.state
-        thread.state = ThreadState.READY
-        self._notify_thread_state_change(thread, old_state, ThreadState.READY)
-        return True
-
-    def thread_run(self, tid: int) -> bool:
-        """将线程设为运行状态"""
-        if not self._can_thread_transition(tid, ThreadState.RUNNING):
-            return False
-        thread = self.threads[tid]
-        old_state = thread.state
-        thread.state = ThreadState.RUNNING
-        self._notify_thread_state_change(thread, old_state, ThreadState.RUNNING)
-        return True
-
-    def thread_block(self, tid: int) -> bool:
-        """将线程设为阻塞状态"""
-        if not self._can_thread_transition(tid, ThreadState.BLOCKED):
-            return False
-        thread = self.threads[tid]
-        old_state = thread.state
-        thread.state = ThreadState.BLOCKED
-        self._notify_thread_state_change(thread, old_state, ThreadState.BLOCKED)
-        return True
-
-    def thread_terminate(self, tid: int) -> bool:
-        """终止线程"""
-        if tid not in self.threads:
-            return False
-        thread = self.threads[tid]
-        if thread.state == ThreadState.TERMINATED:
-            return False
-        old_state = thread.state
-        thread.state = ThreadState.TERMINATED
-        self._notify_thread_state_change(thread, old_state, ThreadState.TERMINATED)
-        return True
-
     def delete_thread(self, tid: int) -> bool:
         """从系统中删除线程"""
         if tid not in self.threads:
@@ -342,7 +285,6 @@ class ProcessManager:
             process = self.processes[thread.pid]
             if tid in process.threads:
                 process.threads.remove(tid)
-        self.thread_terminate(tid)
         del self.threads[tid]
         return True
 
